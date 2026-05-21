@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pong | Jogos</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #e2e8f0;
+      background:
+        radial-gradient(circle at top, rgba(34, 211, 238, 0.18), transparent 30rem),
+        #020617;
+      overflow-x: hidden;
+    }
+
+    .page {
+      width: min(1040px, calc(100% - 24px));
+      padding: 22px 0;
+    }
+
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+
+    a {
+      color: #67e8f9;
+      text-decoration: none;
+      font-weight: 800;
+    }
+
+    a:hover { text-decoration: underline; }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.8rem, 5vw, 3.6rem);
+      line-height: 1;
+    }
+
+    .panel {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 24px;
+      padding: 14px;
+      background: rgba(15, 23, 42, 0.72);
+      box-shadow: 0 24px 100px rgba(0, 0, 0, 0.42);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border-radius: 16px;
+      background: #020617;
+      touch-action: none;
+    }
+
+    .help {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 12px 4px 0;
+      color: #94a3b8;
+      font-size: 0.95rem;
+    }
+
+    kbd {
+      padding: 2px 7px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      border-bottom-width: 3px;
+      border-radius: 7px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-weight: 800;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="topbar">
+      <a href="index.html">← Menu</a>
+      <h1>Pong</h1>
+    </div>
+
+    <section class="panel">
+      <canvas id="game" width="960" height="540" aria-label="Jogo Pong em Canvas"></canvas>
+      <div class="help">
+        <span>Controles: <kbd>W</kbd>/<kbd>S</kbd> ou <kbd>↑</kbd>/<kbd>↓</kbd></span>
+        <span><kbd>Espaço</kbd> pausa/continua · <kbd>R</kbd> reinicia</span>
+        <span>No celular: arraste do lado esquerdo da tela.</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const canvas = document.querySelector('#game');
+    const ctx = canvas.getContext('2d');
+
+    const W = canvas.width;
+    const H = canvas.height;
+    const keys = new Set();
+    const winScore = 7;
+
+    const player = { x: 38, y: H / 2 - 55, w: 16, h: 110, score: 0, speed: 7.4 };
+    const cpu = { x: W - 54, y: H / 2 - 55, w: 16, h: 110, score: 0, speed: 5.6 };
+    const ball = { x: W / 2, y: H / 2, r: 11, vx: 6, vy: 3.2, speed: 6 };
+
+    let paused = false;
+    let started = false;
+    let gameOver = false;
+    let message = 'Clique, toque ou aperte Espaço para começar';
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function resetBall(direction = Math.random() > 0.5 ? 1 : -1) {
+      ball.x = W / 2;
+      ball.y = H / 2;
+      ball.speed = 6;
+      const angle = (Math.random() * 0.8 - 0.4);
+      ball.vx = direction * ball.speed * Math.cos(angle);
+      ball.vy = ball.speed * Math.sin(angle);
+    }
+
+    function resetGame() {
+      player.score = 0;
+      cpu.score = 0;
+      player.y = H / 2 - player.h / 2;
+      cpu.y = H / 2 - cpu.h / 2;
+      gameOver = false;
+      paused = false;
+      started = true;
+      message = '';
+      resetBall();
+    }
+
+    function rectCircleCollision(rect, circle) {
+      const closestX = clamp(circle.x, rect.x, rect.x + rect.w);
+      const closestY = clamp(circle.y, rect.y, rect.y + rect.h);
+      const dx = circle.x - closestX;
+      const dy = circle.y - closestY;
+      return dx * dx + dy * dy <= circle.r * circle.r;
+    }
+
+    function bounceFromPaddle(paddle, side) {
+      const paddleCenter = paddle.y + paddle.h / 2;
+      const relative = (ball.y - paddleCenter) / (paddle.h / 2);
+      const angle = relative * 0.92;
+      ball.speed = Math.min(ball.speed + 0.35, 12.5);
+      ball.vx = side * ball.speed * Math.cos(angle);
+      ball.vy = ball.speed * Math.sin(angle);
+      ball.x = side > 0 ? paddle.x + paddle.w + ball.r : paddle.x - ball.r;
+    }
+
+    function update() {
+      if (!started || paused || gameOver) return;
+
+      if (keys.has('w') || keys.has('arrowup')) player.y -= player.speed;
+      if (keys.has('s') || keys.has('arrowdown')) player.y += player.speed;
+      player.y = clamp(player.y, 12, H - player.h - 12);
+
+      const target = ball.y - cpu.h / 2;
+      const reaction = ball.x > W * 0.43 ? cpu.speed : cpu.speed * 0.58;
+      if (cpu.y < target - 8) cpu.y += reaction;
+      if (cpu.y > target + 8) cpu.y -= reaction;
+      cpu.y = clamp(cpu.y, 12, H - cpu.h - 12);
+
+      ball.x += ball.vx;
+      ball.y += ball.vy;
+
+      if (ball.y - ball.r <= 0 || ball.y + ball.r >= H) {
+        ball.vy *= -1;
+        ball.y = clamp(ball.y, ball.r, H - ball.r);
+      }
+
+      if (ball.vx < 0 && rectCircleCollision(player, ball)) bounceFromPaddle(player, 1);
+      if (ball.vx > 0 && rectCircleCollision(cpu, ball)) bounceFromPaddle(cpu, -1);
+
+      if (ball.x < -40) {
+        cpu.score++;
+        if (cpu.score >= winScore) endGame('Computador venceu. Aperte R para jogar de novo.');
+        else resetBall(-1);
+      }
+
+      if (ball.x > W + 40) {
+        player.score++;
+        if (player.score >= winScore) endGame('Você venceu! Aperte R para jogar de novo.');
+        else resetBall(1);
+      }
+    }
+
+    function endGame(text) {
+      gameOver = true;
+      message = text;
+      resetBall();
+    }
+
+    function drawCourt() {
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, W, H);
+
+      const grd = ctx.createRadialGradient(W / 2, H / 2, 30, W / 2, H / 2, W / 1.6);
+      grd.addColorStop(0, 'rgba(34, 211, 238, 0.08)');
+      grd.addColorStop(1, 'rgba(2, 6, 23, 0)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.23)';
+      ctx.lineWidth = 4;
+      ctx.setLineDash([18, 16]);
+      ctx.beginPath();
+      ctx.moveTo(W / 2, 24);
+      ctx.lineTo(W / 2, H - 24);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.strokeStyle = 'rgba(34, 211, 238, 0.15)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(12, 12, W - 24, H - 24);
+    }
+
+    function drawPaddle(paddle, color) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = color;
+      ctx.fillRect(paddle.x, paddle.y, paddle.w, paddle.h);
+      ctx.shadowBlur = 0;
+    }
+
+    function draw() {
+      drawCourt();
+
+      ctx.font = '800 76px ui-sans-serif, system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.88)';
+      ctx.fillText(player.score, W / 2 - 120, 92);
+      ctx.fillText(cpu.score, W / 2 + 120, 92);
+
+      drawPaddle(player, '#22d3ee');
+      drawPaddle(cpu, '#a78bfa');
+
+      ctx.shadowColor = '#f8fafc';
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      if (!started || paused || gameOver) {
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.68)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#e2e8f0';
+        ctx.textAlign = 'center';
+        ctx.font = '900 34px ui-sans-serif, system-ui';
+        ctx.fillText(gameOver ? 'Fim de jogo' : paused ? 'Pausado' : 'Pong', W / 2, H / 2 - 28);
+        ctx.font = '600 22px ui-sans-serif, system-ui';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(message || 'Aperte Espaço para continuar', W / 2, H / 2 + 18);
+      }
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    function toggleStartPause() {
+      if (gameOver) return resetGame();
+      if (!started) {
+        started = true;
+        message = '';
+        resetBall();
+        return;
+      }
+      paused = !paused;
+      message = paused ? 'Aperte Espaço para continuar' : '';
+    }
+
+    addEventListener('keydown', (event) => {
+      const key = event.key.toLowerCase();
+      if (['arrowup', 'arrowdown', ' ', 'w', 's'].includes(key)) event.preventDefault();
+      if (key === ' ') toggleStartPause();
+      else if (key === 'r') resetGame();
+      else keys.add(key);
+    });
+
+    addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
+
+    function pointerToPlayer(event) {
+      const rect = canvas.getBoundingClientRect();
+      const y = (event.clientY - rect.top) * (H / rect.height);
+      player.y = clamp(y - player.h / 2, 12, H - player.h - 12);
+      if (!started) toggleStartPause();
+    }
+
+    canvas.addEventListener('pointerdown', pointerToPlayer);
+    canvas.addEventListener('pointermove', (event) => {
+      if (event.buttons) pointerToPlayer(event);
+    });
+
+    loop();
+  </script>
+</body>
+</html>
